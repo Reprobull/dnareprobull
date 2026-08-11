@@ -8,8 +8,10 @@ import { deleteClient, cancelSale } from "@/lib/actions";
 export default async function SellerDetailPage({
   params,
 }: {
-  params: { id: string };
+  params: Promise<{ id: string }>;
 }) {
+  const { id } = await params;
+
   const session = await auth();
   const userRole = session!.user.role;
   const userName = session!.user.name ?? "";
@@ -18,7 +20,7 @@ export default async function SellerDetailPage({
     redirect("/dashboard");
   }
 
-  const seller = await prisma.user.findUnique({ where: { id: params.id } });
+  const seller = await prisma.user.findUnique({ where: { id } });
   if (!seller) notFound();
 
   const [clients, sales] = await Promise.all([
