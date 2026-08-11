@@ -62,6 +62,7 @@ export default async function DashboardPage({
             financeiro precisa continuar existindo.
           </div>
         )}
+        {/* Comissão + DNA */}
         <div className="grid md:grid-cols-2 gap-4">
           <div className="bg-[#123A63] rounded-xl p-6">
             <p className="text-[#6FA8E0] text-xs font-bold tracking-wider mb-2">
@@ -112,6 +113,7 @@ export default async function DashboardPage({
           </div>
         </div>
 
+        {/* Cadastro de cliente */}
         <section className="bg-[#123A63] rounded-xl p-6">
           <h2 className="text-lg font-bold mb-4">Cadastrar cliente</h2>
           <form action={createClient} className="grid md:grid-cols-2 gap-3">
@@ -156,6 +158,7 @@ export default async function DashboardPage({
           </form>
         </section>
 
+        {/* Lista de clientes */}
         <section className="bg-[#123A63] rounded-xl p-6">
           <h2 className="text-lg font-bold mb-4">Meus clientes</h2>
           <div className="space-y-2">
@@ -189,6 +192,7 @@ export default async function DashboardPage({
           </div>
         </section>
 
+        {/* Registrar venda */}
         <section className="bg-[#123A63] rounded-xl p-6">
           <h2 className="text-lg font-bold mb-4">Registrar venda</h2>
           {clients.length === 0 ? (
@@ -240,6 +244,7 @@ export default async function DashboardPage({
           )}
         </section>
 
+        {/* Histórico de vendas */}
         <section className="bg-[#123A63] rounded-xl p-6">
           <h2 className="text-lg font-bold mb-4">Histórico de vendas</h2>
           <div className="space-y-2">
@@ -277,3 +282,67 @@ export default async function DashboardPage({
                 )}
               </div>
             ))}
+          </div>
+        </section>
+      </main>
+    </div>
+  );
+}
+
+const selectClass =
+  "w-full rounded-lg px-3 py-2 bg-[#0A1F38] text-white border border-[#1E4E85] focus:outline-none focus:border-[#0055B2]";
+
+function Label({ children }: { children: React.ReactNode }) {
+  return (
+    <label className="text-[#6FA8E0] text-xs font-semibold block mb-1">
+      {children}
+    </label>
+  );
+}
+
+function Field({
+  name,
+  label,
+  type = "text",
+  required = false,
+  placeholder,
+}: {
+  name: string;
+  label: string;
+  type?: string;
+  required?: boolean;
+  placeholder?: string;
+}) {
+  return (
+    <div>
+      <Label>{label}</Label>
+      <input
+        name={name}
+        type={type}
+        required={required}
+        placeholder={placeholder}
+        className={selectClass}
+      />
+    </div>
+  );
+}
+
+function StatusBadge({ status }: { status: string }) {
+  const map: Record<string, string> = {
+    INICIANDO: "bg-yellow-600",
+    INTERMEDIARIO: "bg-orange-600",
+    FECHANDO: "bg-green-600",
+  };
+  const labelMap: Record<string, string> = {
+    INICIANDO: "Iniciando",
+    INTERMEDIARIO: "Intermediário",
+    FECHANDO: "Fechando",
+  };
+  return (
+    <span
+      className={`text-xs font-semibold px-2 py-1 rounded-full ${map[status] || "bg-gray-600"}`}
+    >
+      {labelMap[status] || status}
+    </span>
+  );
+}
