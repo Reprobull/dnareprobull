@@ -1,0 +1,110 @@
+// Schema do banco de dados do sistema DNA ReproBull
+// Provider: Postgres (Vercel Postgres, Neon, ou qualquer Postgres compatível)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  SELLER
+}
+
+enum NegotiationStatus {
+  INICIANDO
+  INTERMEDIARIO
+  FECHANDO
+}
+
+enum EntryPaymentMethod {
+  PIX
+  CARTAO
+}
+
+enum RemainderPaymentMethod {
+  PIX
+  CARTAO_PARCELADO
+  BOLETO_PARCELADO
+}
+
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  role         Role     @default(SELLER)
+  createdAt    DateTime @default(now())
+
+  clients Client[]
+  sales   Sale[]
+}
+
+model Client {
+  id        String            @id @default(cuid())
+  sellerId  String
+  seller    User              @relation(fields: [sellerId], references: [id])
+
+  // Dados de inscrição ReproBull
+  course        String
+  monthYear     String
+  fullName      String
+  email         String
+  document      String // CPF/CNPJ
+  birthDate     DateTime?
+  address       String?
+  neighborhood  String?
+  zipCode       String?
+  cityState     String?
+  phone         String
+
+  // Forma de pagamento
+  entryPayment      EntryPaymentMethod
+  remainderPayment  RemainderPaymentMethod
+  installments      Int?     // quantas vezes, se parcelado
+  boletoDueDay      Int?     // dia do mês de vencimento, se boleto
+
+  status    NegotiationStatus @default(INICIANDO)
+  createdAt DateTime          @default(now())
+
+  sales Sale[]
+}
+
+// Preço e comissão de cada curso: fonte única da verdade para o cálculo automático.
+// Nunca editar comissão manualmente em uma venda — ela é sempre derivada daqui.
+model CoursePricing {
+  id          String @id @default(cuid())
+  courseName  String @unique
+  price       Float
+  commission  Float
+}
+
+model Sale {
+  id         String   @id @default(cuid())
+  clientId   String
+  client     Client   @relation(fields: [clientId], references: [id])
+  sellerId   String
+  seller     User     @relation(fields: [sellerId], references: [id])
+
+  course        String
+  saleValue     Float    // valor bruto da venda (para contagem de DNA)
+  commission    Float    // calculado automaticamente a partir de CoursePricing, nunca digitado
+  paymentMethod String   // resumo textual: "Pix à vista", "Cartão 6x", "Boleto 10x", etc.
+
+  createdAt  DateTime @default(now())
+  cancelledAt DateTime? // se preenchido, a venda foi cancelada (soft delete, mantém auditoria)
+}
+
+// Registro semanal de prospecção, para o dashboard de conversão
+model ProspectLog {
+  id        String   @id @default(cuid())
+  sellerId  String
+  weekStart DateTime // segunda-feira da semana em questão
+  newContacts Int    @default(0)
+
+  @@unique([sellerId, weekStart])
+}
