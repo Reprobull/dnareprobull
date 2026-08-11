@@ -2,6 +2,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { DNA_TIERS, getCurrentTier, getNextTier } from "@/lib/dna";
 import Nav from "@/components/Nav";
+import Link from "next/link";
 
 const DOMINANDO_TOTAL_VAGAS = 10;
 const IMERSAO_TOTAL_VAGAS = 60;
@@ -94,7 +95,16 @@ export default async function OverviewPage() {
                 <div className="flex items-center gap-3">
                   <span className="text-gray-500 font-bold w-5">{i + 1}</span>
                   <div>
-                    <p className="font-semibold">{s.name}</p>
+                    {userRole === "ADMIN" ? (
+                      <Link
+                        href={`/admin/sellers/${s.id}`}
+                        className="font-semibold hover:text-[#6FA8E0] transition"
+                      >
+                        {s.name}
+                      </Link>
+                    ) : (
+                      <p className="font-semibold">{s.name}</p>
+                    )}
                     <p className="text-xs text-gray-400">
                       {s.tier ? `🧬 DNA ${s.tier.level} — ${s.tier.name}` : "Sem DNA ativo ainda"}
                       {s.next &&
