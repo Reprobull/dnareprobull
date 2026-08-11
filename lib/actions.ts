@@ -3,6 +3,7 @@
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import bcrypt from "bcryptjs";
 
 const DEFAULT_NEW_USER_PASSWORD = "reprobull2026";
@@ -72,17 +73,26 @@ export async function updateClientStatus(clientId: string, status: string) {
   revalidatePath("/dashboard");
 }
 
-export async function deleteClient(clientId: string) {
+export async function deleteClient(clientId: string, returnTo: string) {
   const user = await requireUser();
 
-  const client = await prisma.client.findUnique({ where: { id: clientId } });
+  const client = await prisma.client.findUnique({
+    where: { id: clientId },
+    include: { sales: true },
+  });
   if (!client) throw new Error("Cliente não encontrado.");
   if (client.sellerId !== user.id && user.role !== "ADMIN") {
     throw new Error("Sem permissão para excluir este cliente.");
   }
 
+  if (client.sales.length > 0) {
+    // Não deixa excluir um cliente que já tem vendas (mesmo canceladas)
+    // vinculadas a ele — isso quebraria o histórico financeiro.
+    redirect(`${returnTo}?error=cliente_tem_vendas`);
+  }
+
   await prisma.client.delete({ where: { id: clientId } });
-  revalidatePath("/dashboard");
+  revalidatePath(returnTo);
 }
 
 // ---------- VENDAS ----------
