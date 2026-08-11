@@ -1,201 +1,143 @@
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { getCurrentTier, getNextTier, getProgressToNextTier } from "@/lib/dna";
-import { createClient, deleteClient, deleteSale } from "@/lib/actions";
-import { inputClass } from "@/lib/styles";
+import { DNA_TIERS, getCurrentTier, getNextTier } from "@/lib/dna";
 import Nav from "@/components/Nav";
 import Link from "next/link";
 
-export default async function DashboardPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ error?: string }>;
-}) {
-  const { error } = await searchParams;
+const DOMINANDO_TOTAL_VAGAS = 10;
+const IMERSAO_TOTAL_VAGAS = 60;
+
+export default async function OverviewPage() {
   const session = await auth();
-  const userId = session!.user.id;
   const userName = session!.user.name ?? "";
   const userRole = session!.user.role;
 
-  const [clients, sales] = await Promise.all([
-    prisma.client.findMany({
-      where: { sellerId: userId },
-      orderBy: { createdAt: "desc" },
-    }),
-    prisma.sale.findMany({
-      where: { sellerId: userId },
-      include: { client: true },
-      orderBy: { createdAt: "desc" },
-    }),
-  ]);
+  const sellers = await prisma.user.findMany({
+    where: { role: "SELLER" },
+    include: { sales: true },
+  });
 
-  const totalSales = sales.reduce((sum, s) => sum + s.saleValue, 0);
-  const totalCommission = sales.reduce((sum, s) => sum + s.commission, 0);
+  const leaderboard = sellers
+    .map((s) => {
+      const total = s.sales.reduce((sum, sale) => sum + sale.saleValue, 0);
+      return {
+        id: s.id,
+        name: s.name,
+        total,
+        tier: getCurrentTier(total),
+        next: getNextTier(total),
+      };
+    })
+    .sort((a, b) => b.total - a.total);
 
-  const currentTier = getCurrentTier(totalSales);
-  const nextTier = getNextTier(totalSales);
-  const progress = getProgressToNextTier(totalSales);
+  const allSales = await prisma.sale.findMany();
+  const dominandoVendidas = allSales.filter(
+    (s) => s.course === "Dominando a Estação de Monta"
+  ).length;
+  const imersaoVendidas = allSales.filter(
+    (s) => s.course === "Imersão Muito Mais que Veterinária"
+  ).length;
 
-  const now = new Date();
-  const monthCommission = sales
-    .filter(
-      (s) =>
-        s.createdAt.getMonth() === now.getMonth() &&
-        s.createdAt.getFullYear() === now.getFullYear()
-    )
-    .reduce((sum, s) => sum + s.commission, 0);
+  const dominandoEsgotado = dominandoVendidas >= DOMINANDO_TOTAL_VAGAS;
+  const imersaoEsgotada = imersaoVendidas >= IMERSAO_TOTAL_VAGAS;
 
   return (
     <div className="min-h-screen">
       <Nav userName={userName} role={userRole} />
 
       <main className="max-w-5xl mx-auto px-4 py-8 space-y-8">
-        {error === "cliente_tem_vendas" && (
-          <div className="bg-red-900/60 border border-red-700 rounded-lg px-4 py-3 text-sm">
-            Não é possível excluir esse cliente porque ele já tem vendas
-            registradas. Exclua as vendas dele primeiro, se necessário.
-          </div>
-        )}
-
-        {/* Comissão + DNA */}
+        {/* Contadores de vagas */}
         <div className="grid md:grid-cols-2 gap-4">
-          <div className="bg-[#123A63] rounded-xl p-6">
-            <p className="text-[#6FA8E0] text-xs font-bold tracking-wider mb-2">
-              SUA COMISSÃO
-            </p>
-            <p className="text-4xl font-bold">
-              R$ {monthCommission.toLocaleString("pt-BR")}
-            </p>
-            <p className="text-sm text-gray-300 mt-1">já faturado este mês</p>
-            <hr className="border-[#1E4E85] my-3" />
-            <p className="text-sm text-gray-300">
-              Acumulado no ano:{" "}
-              <span className="font-bold text-white">
-                R$ {totalCommission.toLocaleString("pt-BR")}
-              </span>
-            </p>
-          </div>
-
-          <div className="bg-[#123A63] rounded-xl p-6">
-            <p className="text-[#6FA8E0] text-xs font-bold tracking-wider mb-2">
-              🧬 SEU DNA
-            </p>
-            <p className="text-2xl font-bold">
-              {currentTier
-                ? `DNA ${currentTier.level} — ${currentTier.name}`
-                : "Ainda sem DNA ativo"}
-            </p>
-            <p className="text-sm text-gray-300 mt-1">
-              Vendas brutas acumuladas: R$ {totalSales.toLocaleString("pt-BR")}
-            </p>
-            <div className="w-full bg-[#0A1F38] rounded-full h-2.5 mt-4">
-              <div
-                className="bg-[#0055B2] h-2.5 rounded-full transition-all"
-                style={{ width: `${Math.round(progress * 100)}%` }}
-              />
-            </div>
-            {nextTier ? (
-              <p className="text-xs text-gray-400 mt-2">
-                Faltam R${" "}
-                {(nextTier.threshold - totalSales).toLocaleString("pt-BR")}{" "}
-                para ativar DNA {nextTier.level} — {nextTier.name}
-              </p>
-            ) : (
-              <p className="text-xs text-[#6FA8E0] mt-2">
-                Você chegou ao topo do Programa DNA ReproBull. 🏆
-              </p>
-            )}
-          </div>
+          <SeatCounter
+            title="Dominando — Setembro"
+            sold={dominandoVendidas}
+            total={DOMINANDO_TOTAL_VAGAS}
+          />
+          <SeatCounter
+            title="Imersão — 21 de Novembro"
+            sold={imersaoVendidas}
+            total={IMERSAO_TOTAL_VAGAS}
+          />
         </div>
 
-        {/* Cadastro rápido de cliente */}
-        <section className="bg-[#123A63] rounded-xl p-6">
-          <h2 className="text-lg font-bold mb-4">+ Cadastrar cliente</h2>
-          <form action={createClient} className="flex flex-wrap gap-3 items-end">
-            <div className="flex-1 min-w-[180px]">
-              <label className="text-[#6FA8E0] text-xs font-semibold block mb-1">
-                Nome
-              </label>
-              <input name="fullName" required className={inputClass} />
-            </div>
-            <div className="flex-1 min-w-[160px]">
-              <label className="text-[#6FA8E0] text-xs font-semibold block mb-1">
-                Telefone
-              </label>
-              <input name="phone" required className={inputClass} />
-            </div>
-            <button
-              type="submit"
-              className="bg-[#0055B2] hover:bg-[#0A6BC7] text-white font-bold px-5 py-2 rounded-lg transition"
-            >
-              Cadastrar
-            </button>
-          </form>
-        </section>
+        {/* Meta dupla */}
+        <div
+          className={`rounded-xl p-6 ${
+            dominandoEsgotado && imersaoEsgotada ? "bg-[#0055B2]" : "bg-[#123A63]"
+          }`}
+        >
+          <p className="text-xs font-bold tracking-wider text-[#6FA8E0] mb-1">
+            META DUPLA
+          </p>
+          {dominandoEsgotado && imersaoEsgotada ? (
+            <p className="font-bold">
+              🎉 As duas campanhas esgotaram! O time ganhou o curso particular de
+              Exame Ginecológico e Diagnóstico de Gestação, com certificado.
+            </p>
+          ) : (
+            <p className="text-sm text-gray-300">
+              Esgotando o Dominando de setembro e a Imersão de novembro, o time
+              inteiro ganha um curso particular gratuito, com certificado.
+            </p>
+          )}
+        </div>
 
-        {/* Lista de clientes */}
+        {/* Ranking */}
         <section className="bg-[#123A63] rounded-xl p-6">
-          <h2 className="text-lg font-bold mb-4">Meus clientes</h2>
+          <h2 className="text-lg font-bold mb-4">Ranking do time</h2>
           <div className="space-y-2">
-            {clients.length === 0 && (
-              <p className="text-gray-400 text-sm">Nenhum cliente cadastrado ainda.</p>
-            )}
-            {clients.map((c) => (
+            {leaderboard.map((s, i) => (
               <div
-                key={c.id}
+                key={s.id}
                 className="flex items-center justify-between bg-[#0A1F38] rounded-lg px-4 py-3"
               >
-                <Link href={`/dashboard/clients/${c.id}`} className="flex-1">
-                  <p className="font-semibold hover:text-[#6FA8E0] transition">
-                    {c.fullName}
-                  </p>
-                  <p className="text-xs text-gray-400">{c.phone}</p>
-                </Link>
                 <div className="flex items-center gap-3">
-                  <StatusBadge status={c.status} />
-                  <form action={deleteClient.bind(null, c.id, "/dashboard")}>
-                    <button
-                      type="submit"
-                      className="text-red-400 hover:text-red-300 text-sm font-semibold"
-                    >
-                      Excluir
-                    </button>
-                  </form>
+                  <span className="text-gray-500 font-bold w-5">{i + 1}</span>
+                  <div>
+                    {userRole === "ADMIN" ? (
+                      <Link
+                        href={`/admin/sellers/${s.id}`}
+                        className="font-semibold hover:text-[#6FA8E0] transition"
+                      >
+                        {s.name}
+                      </Link>
+                    ) : (
+                      <p className="font-semibold">{s.name}</p>
+                    )}
+                    <p className="text-xs text-gray-400">
+                      {s.tier ? `🧬 DNA ${s.tier.level} — ${s.tier.name}` : "Sem DNA ativo ainda"}
+                      {s.next &&
+                        ` · faltam R$ ${(s.next.threshold - s.total).toLocaleString("pt-BR")} para o próximo DNA`}
+                    </p>
+                  </div>
                 </div>
+                <p className="font-bold">R$ {s.total.toLocaleString("pt-BR")}</p>
               </div>
             ))}
           </div>
         </section>
 
-        {/* Histórico de vendas */}
-        <section className="bg-[#123A63] rounded-xl p-6">
-          <h2 className="text-lg font-bold mb-4">Histórico de vendas</h2>
-          <div className="space-y-2">
-            {sales.length === 0 && (
-              <p className="text-gray-400 text-sm">Nenhuma venda registrada ainda.</p>
-            )}
-            {sales.map((s) => (
+        {/* Trilha de DNA */}
+        <section>
+          <h2 className="text-lg font-bold mb-4">A jornada DNA ReproBull</h2>
+          <div className="grid md:grid-cols-3 gap-3">
+            {DNA_TIERS.map((tier) => (
               <div
-                key={s.id}
-                className="flex items-center justify-between bg-[#0A1F38] rounded-lg px-4 py-3"
+                key={tier.level}
+                className="bg-[#123A63] rounded-xl p-4"
+                style={{
+                  background: `linear-gradient(135deg, #123A63, #0A1F38)`,
+                }}
               >
-                <Link href={`/dashboard/clients/${s.clientId}`} className="flex-1">
-                  <p className="font-semibold hover:text-[#6FA8E0] transition">
-                    {s.client.fullName} — {s.course}
-                  </p>
-                  <p className="text-xs text-gray-400">
-                    {s.monthYear} · R$ {s.saleValue.toLocaleString("pt-BR")} ·
-                    comissão R$ {s.commission.toLocaleString("pt-BR")}
-                  </p>
-                </Link>
-                <form action={deleteSale.bind(null, s.id)}>
-                  <button
-                    type="submit"
-                    className="text-red-400 hover:text-red-300 text-sm font-semibold"
-                  >
-                    Excluir venda
-                  </button>
-                </form>
+                <p className="text-xs font-bold text-[#6FA8E0] mb-1">
+                  🧬 DNA {tier.level}
+                </p>
+                <p className="font-bold">{tier.name}</p>
+                <p className="text-xl font-bold mt-1">
+                  R$ {tier.threshold.toLocaleString("pt-BR")}
+                </p>
+                <p className="text-xs text-gray-400 mt-2">{tier.description}</p>
+                <p className="text-xs text-[#6FA8E0] italic mt-2">{tier.prize}</p>
               </div>
             ))}
           </div>
@@ -205,24 +147,25 @@ export default async function DashboardPage({
   );
 }
 
-function StatusBadge({ status }: { status: string }) {
-  const map: Record<string, string> = {
-    INICIANDO: "bg-yellow-600",
-    INTERMEDIARIO: "bg-orange-600",
-    FECHANDO: "bg-blue-600",
-    VENDA_CONCLUIDA: "bg-green-600",
-  };
-  const labelMap: Record<string, string> = {
-    INICIANDO: "Iniciando",
-    INTERMEDIARIO: "Intermediário",
-    FECHANDO: "Fechando",
-    VENDA_CONCLUIDA: "Venda Concluída",
-  };
+function SeatCounter({
+  title,
+  sold,
+  total,
+}: {
+  title: string;
+  sold: number;
+  total: number;
+}) {
+  const remaining = Math.max(0, total - sold);
   return (
-    <span
-      className={`text-xs font-semibold px-2 py-1 rounded-full ${map[status] || "bg-gray-600"}`}
-    >
-      {labelMap[status] || status}
-    </span>
+    <div className="bg-[#123A63] rounded-xl p-6 text-center">
+      <p className="text-xs font-bold text-[#6FA8E0] tracking-wider mb-1">
+        {title.toUpperCase()}
+      </p>
+      <p className="text-3xl font-bold">{remaining}</p>
+      <p className="text-xs text-gray-400 mt-1">
+        vagas restantes de {total} ({sold} vendidas)
+      </p>
+    </div>
   );
 }
