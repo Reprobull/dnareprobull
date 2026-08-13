@@ -4,9 +4,6 @@ import { DNA_TIERS, getCurrentTier, getNextTier } from "@/lib/dna";
 import Nav from "@/components/Nav";
 import Link from "next/link";
 
-const DOMINANDO_TOTAL_VAGAS = 10;
-const IMERSAO_TOTAL_VAGAS = 60;
-
 export default async function OverviewPage() {
   const session = await auth();
   const userName = session!.user.name ?? "";
@@ -30,57 +27,76 @@ export default async function OverviewPage() {
     })
     .sort((a, b) => b.total - a.total);
 
-  const allSales = await prisma.sale.findMany();
-  const dominandoVendidas = allSales.filter(
-    (s) => s.course === "Dominando a Estação de Monta"
-  ).length;
-  const imersaoVendidas = allSales.filter(
-    (s) => s.course === "Imersão Muito Mais que Veterinária"
-  ).length;
+  const editions = await prisma.courseEdition.findMany({
+    include: { coursePricing: true, sales: true },
+    orderBy: { createdAt: "desc" },
+  });
 
-  const dominandoEsgotado = dominandoVendidas >= DOMINANDO_TOTAL_VAGAS;
-  const imersaoEsgotada = imersaoVendidas >= IMERSAO_TOTAL_VAGAS;
+  // Meta dupla: se existir uma edição de Setembro do Dominando e uma edição
+  // de Novembro da Imersão, e as duas estiverem esgotadas, o time ganha o
+  // bônus. Se essas edições ainda não existirem, o aviso simplesmente não some.
+  const dominandoSetembro = editions.find(
+    (e) =>
+      e.coursePricing.courseName === "Dominando a Estação de Monta" &&
+      e.monthYear.toLowerCase().includes("setembro")
+  );
+  const imersaoNovembro = editions.find(
+    (e) =>
+      e.coursePricing.courseName === "Imersão Muito Mais que Veterinária" &&
+      e.monthYear.toLowerCase().includes("novembro")
+  );
+  const metaDuplaAtingida =
+    dominandoSetembro &&
+    imersaoNovembro &&
+    dominandoSetembro.sales.length >= dominandoSetembro.totalSeats &&
+    imersaoNovembro.sales.length >= imersaoNovembro.totalSeats;
 
   return (
     <div className="min-h-screen">
       <Nav userName={userName} role={userRole} />
 
       <main className="max-w-5xl mx-auto px-4 py-8 space-y-8">
-        {/* Contadores de vagas */}
-        <div className="grid md:grid-cols-2 gap-4">
-          <SeatCounter
-            title="Dominando — Setembro"
-            sold={dominandoVendidas}
-            total={DOMINANDO_TOTAL_VAGAS}
-          />
-          <SeatCounter
-            title="Imersão — 21 de Novembro"
-            sold={imersaoVendidas}
-            total={IMERSAO_TOTAL_VAGAS}
-          />
-        </div>
+        {/* Contadores de vagas por edição */}
+        {editions.length > 0 && (
+          <section>
+            <h2 className="text-lg font-bold mb-4">Vagas por turma</h2>
+            <div className="grid md:grid-cols-2 gap-4">
+              {editions.map((e) => (
+                <SeatCounter
+                  key={e.id}
+                  title={`${e.coursePricing.courseName} — ${e.monthYear}`}
+                  sold={e.sales.length}
+                  total={e.totalSeats}
+                />
+              ))}
+            </div>
+          </section>
+        )}
 
         {/* Meta dupla */}
-        <div
-          className={`rounded-xl p-6 ${
-            dominandoEsgotado && imersaoEsgotada ? "bg-[#0055B2]" : "bg-[#123A63]"
-          }`}
-        >
-          <p className="text-xs font-bold tracking-wider text-[#6FA8E0] mb-1">
-            META DUPLA
-          </p>
-          {dominandoEsgotado && imersaoEsgotada ? (
-            <p className="font-bold">
-              🎉 As duas campanhas esgotaram! O time ganhou o curso particular de
-              Exame Ginecológico e Diagnóstico de Gestação, com certificado.
+        {dominandoSetembro && imersaoNovembro && (
+          <div
+            className={`rounded-xl p-6 ${
+              metaDuplaAtingida ? "bg-[#0055B2]" : "bg-[#123A63]"
+            }`}
+          >
+            <p className="text-xs font-bold tracking-wider text-[#6FA8E0] mb-1">
+              META DUPLA
             </p>
-          ) : (
-            <p className="text-sm text-gray-300">
-              Esgotando o Dominando de setembro e a Imersão de novembro, o time
-              inteiro ganha um curso particular gratuito, com certificado.
-            </p>
-          )}
-        </div>
+            {metaDuplaAtingida ? (
+              <p className="font-bold">
+                🎉 As duas campanhas esgotaram! O time ganhou o curso particular
+                de Exame Ginecológico e Diagnóstico de Gestação, com certificado.
+              </p>
+            ) : (
+              <p className="text-sm text-gray-300">
+                Esgotando o Dominando de setembro e a Imersão de novembro, o
+                time inteiro ganha um curso particular gratuito, com
+                certificado.
+              </p>
+            )}
+          </div>
+        )}
 
         {/* Ranking */}
         <section className="bg-[#123A63] rounded-xl p-6">
