@@ -1,197 +1,265 @@
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { getCurrentTier, getNextTier, getProgressToNextTier } from "@/lib/dna";
-import { createClient, deleteClient, deleteSale } from "@/lib/actions";
-import { inputClass } from "@/lib/styles";
+import { redirect, notFound } from "next/navigation";
 import Nav from "@/components/Nav";
-import Link from "next/link";
+import {
+  completeClientProfile,
+  createSale,
+  deleteSale,
+  updateClientStatus,
+} from "@/lib/actions";
+import { inputClass } from "@/lib/styles";
 
-export default async function DashboardPage({
-  searchParams,
+const STATUSES = [
+  { value: "INICIANDO", label: "Iniciando" },
+  { value: "INTERMEDIARIO", label: "Intermediário" },
+  { value: "FECHANDO", label: "Fechando" },
+  { value: "VENDA_CONCLUIDA", label: "Venda Concluída" },
+] as const;
+
+export default async function ClientDetailPage({
+  params,
 }: {
-  searchParams: Promise<{ error?: string }>;
+  params: Promise<{ id: string }>;
 }) {
-  const { error } = await searchParams;
+  const { id } = await params;
   const session = await auth();
   const userId = session!.user.id;
   const userName = session!.user.name ?? "";
   const userRole = session!.user.role;
 
-  const [clients, sales] = await Promise.all([
-    prisma.client.findMany({
-      where: { sellerId: userId },
-      orderBy: { createdAt: "desc" },
-    }),
-    prisma.sale.findMany({
-      where: { sellerId: userId },
-      include: {
-        client: true,
-        courseEdition: { include: { coursePricing: true } },
+  const client = await prisma.client.findUnique({
+    where: { id },
+    include: {
+      sales: {
+        include: { courseEdition: { include: { coursePricing: true } } },
+        orderBy: { createdAt: "desc" },
       },
-      orderBy: { createdAt: "desc" },
-    }),
-  ]);
+    },
+  });
+  if (!client) notFound();
+  if (client.sellerId !== userId && userRole !== "ADMIN") {
+    redirect("/dashboard");
+  }
 
-  const totalSales = sales.reduce((sum, s) => sum + s.saleValue, 0);
-  const totalCommission = sales.reduce((sum, s) => sum + s.commission, 0);
-
-  const currentTier = getCurrentTier(totalSales);
-  const nextTier = getNextTier(totalSales);
-  const progress = getProgressToNextTier(totalSales);
-
-  const now = new Date();
-  const monthCommission = sales
-    .filter(
-      (s) =>
-        s.createdAt.getMonth() === now.getMonth() &&
-        s.createdAt.getFullYear() === now.getFullYear()
-    )
-    .reduce((sum, s) => sum + s.commission, 0);
+  const courses = await prisma.coursePricing.findMany({
+    include: {
+      editions: { include: { sales: true }, orderBy: { createdAt: "desc" } },
+    },
+    orderBy: { courseName: "asc" },
+  });
+  const profileComplete = Boolean(client.email && client.document);
 
   return (
     <div className="min-h-screen">
       <Nav userName={userName} role={userRole} />
 
-      <main className="max-w-5xl mx-auto px-4 py-8 space-y-8">
-        {error === "cliente_tem_vendas" && (
-          <div className="bg-red-900/60 border border-red-700 rounded-lg px-4 py-3 text-sm">
-            Não é possível excluir esse cliente porque ele já tem vendas
-            registradas. Exclua as vendas dele primeiro, se necessário.
-          </div>
-        )}
-
-        {/* Comissão + DNA */}
-        <div className="grid md:grid-cols-2 gap-4">
-          <div className="bg-[#123A63] rounded-xl p-6">
-            <p className="text-[#6FA8E0] text-xs font-bold tracking-wider mb-2">
-              SUA COMISSÃO
-            </p>
-            <p className="text-4xl font-bold">
-              R$ {monthCommission.toLocaleString("pt-BR")}
-            </p>
-            <p className="text-sm text-gray-300 mt-1">já faturado este mês</p>
-            <hr className="border-[#1E4E85] my-3" />
-            <p className="text-sm text-gray-300">
-              Acumulado no ano:{" "}
-              <span className="font-bold text-white">
-                R$ {totalCommission.toLocaleString("pt-BR")}
-              </span>
-            </p>
-          </div>
-
-          <div className="bg-[#123A63] rounded-xl p-6">
-            <p className="text-[#6FA8E0] text-xs font-bold tracking-wider mb-2">
-              🧬 SEU DNA
-            </p>
-            <p className="text-2xl font-bold">
-              {currentTier
-                ? `DNA ${currentTier.level} — ${currentTier.name}`
-                : "Ainda sem DNA ativo"}
-            </p>
-            <p className="text-sm text-gray-300 mt-1">
-              Vendas brutas acumuladas: R$ {totalSales.toLocaleString("pt-BR")}
-            </p>
-            <div className="w-full bg-[#0A1F38] rounded-full h-2.5 mt-4">
-              <div
-                className="bg-[#0055B2] h-2.5 rounded-full transition-all"
-                style={{ width: `${Math.round(progress * 100)}%` }}
-              />
-            </div>
-            {nextTier ? (
-              <p className="text-xs text-gray-400 mt-2">
-                Faltam R${" "}
-                {(nextTier.threshold - totalSales).toLocaleString("pt-BR")}{" "}
-                para ativar DNA {nextTier.level} — {nextTier.name}
-              </p>
-            ) : (
-              <p className="text-xs text-[#6FA8E0] mt-2">
-                Você chegou ao topo do Programa DNA ReproBull. 🏆
-              </p>
-            )}
-          </div>
+      <main className="max-w-3xl mx-auto px-4 py-8 space-y-8">
+        <div>
+          <p className="text-xs text-[#6FA8E0] font-bold tracking-wider">
+            CLIENTE
+          </p>
+          <h1 className="text-2xl font-bold">{client.fullName}</h1>
+          <p className="text-sm text-gray-400">{client.phone}</p>
         </div>
 
-        {/* Cadastro rápido de cliente */}
+        {/* Status */}
         <section className="bg-[#123A63] rounded-xl p-6">
-          <h2 className="text-lg font-bold mb-4">+ Cadastrar cliente</h2>
-          <form action={createClient} className="flex flex-wrap gap-3 items-end">
-            <div className="flex-1 min-w-[180px]">
-              <label className="text-[#6FA8E0] text-xs font-semibold block mb-1">
-                Nome
-              </label>
-              <input name="fullName" required className={inputClass} />
-            </div>
-            <div className="flex-1 min-w-[160px]">
-              <label className="text-[#6FA8E0] text-xs font-semibold block mb-1">
-                Telefone
-              </label>
-              <input name="phone" required className={inputClass} />
-            </div>
-            <button
-              type="submit"
-              className="bg-[#0055B2] hover:bg-[#0A6BC7] text-white font-bold px-5 py-2 rounded-lg transition"
-            >
-              Cadastrar
-            </button>
-          </form>
-        </section>
-
-        {/* Lista de clientes */}
-        <section className="bg-[#123A63] rounded-xl p-6">
-          <h2 className="text-lg font-bold mb-4">Meus clientes</h2>
-          <div className="space-y-2">
-            {clients.length === 0 && (
-              <p className="text-gray-400 text-sm">Nenhum cliente cadastrado ainda.</p>
-            )}
-            {clients.map((c) => (
-              <div
-                key={c.id}
-                className="flex items-center justify-between bg-[#0A1F38] rounded-lg px-4 py-3"
+          <h2 className="text-lg font-bold mb-3">Status da negociação</h2>
+          <div className="flex flex-wrap gap-2">
+            {STATUSES.map((s) => (
+              <form
+                key={s.value}
+                action={updateClientStatus.bind(null, client.id, s.value)}
               >
-                <Link href={`/dashboard/clients/${c.id}`} className="flex-1">
-                  <p className="font-semibold hover:text-[#6FA8E0] transition">
-                    {c.fullName}
-                  </p>
-                  <p className="text-xs text-gray-400">{c.phone}</p>
-                </Link>
-                <div className="flex items-center gap-3">
-                  <StatusBadge status={c.status} />
-                  <form action={deleteClient.bind(null, c.id, "/dashboard")}>
-                    <button
-                      type="submit"
-                      className="text-red-400 hover:text-red-300 text-sm font-semibold"
-                    >
-                      Excluir
-                    </button>
-                  </form>
-                </div>
-              </div>
+                <button
+                  type="submit"
+                  className={`px-3 py-1.5 rounded-full text-xs font-semibold transition ${
+                    client.status === s.value
+                      ? "bg-[#0055B2] text-white"
+                      : "bg-[#0A1F38] text-gray-300 hover:text-white"
+                  }`}
+                >
+                  {s.label}
+                </button>
+              </form>
             ))}
           </div>
         </section>
 
-        {/* Histórico de vendas */}
-        <section className="bg-[#123A63] rounded-xl p-6">
-          <h2 className="text-lg font-bold mb-4">Histórico de vendas</h2>
-          <div className="space-y-2">
-            {sales.length === 0 && (
-              <p className="text-gray-400 text-sm">Nenhuma venda registrada ainda.</p>
+        {/* Dados de inscrição */}
+        {!profileComplete ? (
+          <section className="bg-[#123A63] rounded-xl p-6">
+            <h2 className="text-lg font-bold mb-1">
+              Dados pra inscrição ReproBull
+            </h2>
+            <p className="text-xs text-gray-400 mb-4">
+              Preencha quando for fechar a venda.
+            </p>
+            <form
+              action={completeClientProfile.bind(null, client.id)}
+              className="grid md:grid-cols-2 gap-3"
+            >
+              <FormField
+                name="fullName"
+                label="Nome completo"
+                defaultValue={client.fullName}
+                required
+              />
+              <FormField name="email" label="E-mail" type="email" required />
+              <FormField name="document" label="CPF/CNPJ" required />
+              <FormField
+                name="birthDate"
+                label="Data de nascimento"
+                type="date"
+              />
+              <FormField
+                name="phone"
+                label="Celular"
+                defaultValue={client.phone}
+                required
+              />
+              <FormField name="address" label="Endereço" />
+              <FormField name="neighborhood" label="Bairro" />
+              <FormField name="zipCode" label="CEP" />
+              <FormField name="cityState" label="Cidade/Estado" />
+
+              <div className="md:col-span-2">
+                <button
+                  type="submit"
+                  className="bg-[#0055B2] hover:bg-[#0A6BC7] text-white font-bold px-5 py-2 rounded-lg transition"
+                >
+                  Adicionar ao cadastro do cliente
+                </button>
+              </div>
+            </form>
+          </section>
+        ) : (
+          <section className="bg-[#123A63] rounded-xl p-6">
+            <h2 className="text-lg font-bold mb-2">Dados de inscrição</h2>
+            <p className="text-sm text-gray-300">
+              {client.email} · {client.document}
+            </p>
+            {client.address && (
+              <p className="text-sm text-gray-300 mt-1">
+                {client.address}
+                {client.neighborhood && `, ${client.neighborhood}`}
+                {client.cityState && ` — ${client.cityState}`}
+                {client.zipCode && ` · CEP ${client.zipCode}`}
+              </p>
             )}
-            {sales.map((s) => (
+          </section>
+        )}
+
+        {/* Registrar venda */}
+        {profileComplete && (
+          <section className="bg-[#123A63] rounded-xl p-6">
+            <h2 className="text-lg font-bold mb-4">Registrar venda</h2>
+            <form action={createSale} className="grid md:grid-cols-2 gap-3">
+              <input type="hidden" name="clientId" value={client.id} />
+
+              <div className="md:col-span-2">
+                <label className="text-[#6FA8E0] text-xs font-semibold block mb-1">
+                  Curso e edição (turma)
+                </label>
+                <select name="courseEditionId" required className={inputClass}>
+                  {courses.flatMap((c) =>
+                    c.editions.map((e) => {
+                      const remaining = Math.max(
+                        0,
+                        e.totalSeats - e.sales.length
+                      );
+                      return (
+                        <option key={e.id} value={e.id} disabled={remaining <= 0}>
+                          {c.courseName} — {e.monthYear} ({remaining} vagas
+                          restantes) · R$ {c.price.toLocaleString("pt-BR")}
+                        </option>
+                      );
+                    })
+                  )}
+                </select>
+                {courses.every((c) => c.editions.length === 0) && (
+                  <p className="text-xs text-red-400 mt-1">
+                    Nenhuma edição de curso cadastrada ainda. Peça ao admin
+                    para criar em Admin &gt; Cursos e edições.
+                  </p>
+                )}
+              </div>
+
+              <div>
+                <label className="text-[#6FA8E0] text-xs font-semibold block mb-1">
+                  Entrada
+                </label>
+                <select name="entryPayment" required className={inputClass}>
+                  <option value="PIX">Pix</option>
+                  <option value="CARTAO">Cartão</option>
+                </select>
+              </div>
+              <div>
+                <label className="text-[#6FA8E0] text-xs font-semibold block mb-1">
+                  Restante
+                </label>
+                <select
+                  name="remainderPayment"
+                  required
+                  className={inputClass}
+                >
+                  <option value="PIX">Pix</option>
+                  <option value="CARTAO_PARCELADO">Parcelado no cartão</option>
+                  <option value="BOLETO_PARCELADO">Parcelado no boleto</option>
+                </select>
+              </div>
+              <FormField
+                name="installments"
+                label="Quantas vezes (se parcelado)"
+                type="number"
+              />
+              <FormField
+                name="boletoDueDay"
+                label="Dia do vencimento (se boleto)"
+                type="number"
+              />
+
+              <div className="md:col-span-2">
+                <p className="text-xs text-gray-400 mb-2">
+                  A comissão é calculada automaticamente com base no curso
+                  selecionado.
+                </p>
+                <button
+                  type="submit"
+                  className="bg-[#0055B2] hover:bg-[#0A6BC7] text-white font-bold px-5 py-2 rounded-lg transition"
+                >
+                  Registrar venda
+                </button>
+              </div>
+            </form>
+          </section>
+        )}
+
+        {/* Cursos já comprados por este cliente */}
+        <section className="bg-[#123A63] rounded-xl p-6">
+          <h2 className="text-lg font-bold mb-4">
+            Cursos já comprados ({client.sales.length})
+          </h2>
+          <div className="space-y-2">
+            {client.sales.length === 0 && (
+              <p className="text-gray-400 text-sm">Nenhuma venda ainda.</p>
+            )}
+            {client.sales.map((s) => (
               <div
                 key={s.id}
                 className="flex items-center justify-between bg-[#0A1F38] rounded-lg px-4 py-3"
               >
-                <Link href={`/dashboard/clients/${s.clientId}`} className="flex-1">
-                  <p className="font-semibold hover:text-[#6FA8E0] transition">
-                    {s.client.fullName} — {s.courseEdition.coursePricing.courseName}
+                <div>
+                  <p className="font-semibold">
+                    {s.courseEdition.coursePricing.courseName} —{" "}
+                    {s.courseEdition.monthYear}
                   </p>
                   <p className="text-xs text-gray-400">
-                    {s.courseEdition.monthYear} · R${" "}
-                    {s.saleValue.toLocaleString("pt-BR")} · comissão R${" "}
+                    R$ {s.saleValue.toLocaleString("pt-BR")} · comissão R${" "}
                     {s.commission.toLocaleString("pt-BR")}
                   </p>
-                </Link>
+                </div>
                 <form action={deleteSale.bind(null, s.id)}>
                   <button
                     type="submit"
@@ -209,24 +277,31 @@ export default async function DashboardPage({
   );
 }
 
-function StatusBadge({ status }: { status: string }) {
-  const map: Record<string, string> = {
-    INICIANDO: "bg-yellow-600",
-    INTERMEDIARIO: "bg-orange-600",
-    FECHANDO: "bg-blue-600",
-    VENDA_CONCLUIDA: "bg-green-600",
-  };
-  const labelMap: Record<string, string> = {
-    INICIANDO: "Iniciando",
-    INTERMEDIARIO: "Intermediário",
-    FECHANDO: "Fechando",
-    VENDA_CONCLUIDA: "Venda Concluída",
-  };
+function FormField({
+  name,
+  label,
+  type = "text",
+  required = false,
+  defaultValue,
+}: {
+  name: string;
+  label: string;
+  type?: string;
+  required?: boolean;
+  defaultValue?: string;
+}) {
   return (
-    <span
-      className={`text-xs font-semibold px-2 py-1 rounded-full ${map[status] || "bg-gray-600"}`}
-    >
-      {labelMap[status] || status}
-    </span>
+    <div>
+      <label className="text-[#6FA8E0] text-xs font-semibold block mb-1">
+        {label}
+      </label>
+      <input
+        name={name}
+        type={type}
+        required={required}
+        defaultValue={defaultValue}
+        className={inputClass}
+      />
+    </div>
   );
 }
